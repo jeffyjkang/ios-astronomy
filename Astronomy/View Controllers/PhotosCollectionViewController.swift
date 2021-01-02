@@ -12,6 +12,10 @@ class PhotosCollectionViewController: UIViewController, UICollectionViewDataSour
     
     let cache = Cache<Int, Data>()
     
+    private let photoFetchQueue = OperationQueue()
+    
+    private var fetchOptDict: [Int: Operation] = [:]
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         
@@ -62,30 +66,56 @@ class PhotosCollectionViewController: UIViewController, UICollectionViewDataSour
         return UIEdgeInsets(top: 0, left: 10.0, bottom: 0, right: 10.0)
     }
     
+    func collectionView(_ collectionView: UICollectionView, didEndDisplaying cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
+        let photoReference = photoReferences[indexPath.item]
+        fetchOptDict[photoReference.id]?.cancel()
+    }
+    
     // MARK: - Private
     
     private func loadImage(forCell cell: ImageCollectionViewCell, forItemAt indexPath: IndexPath) {
         
-         let photoReference = photoReferences[indexPath.item]
-        
         // TODO: Implement image loading here
-        guard let imageURL = photoReference.imageURL.usingHTTPS else { return }
         
+        let photoReference = photoReferences[indexPath.item]
+
         if let value = cache.value(forKey: photoReference.id) {
             cell.imageView.image = UIImage(data: value)
         } else {
-            URLSession.shared.dataTask(with: imageURL) { (data, response, error) in
-                if let error = error {
-                    print("Error in data task: \(error)")
-                    return
+//            guard let imageURL = photoReference.imageURL.usingHTTPS else { return }
+//            URLSession.shared.dataTask(with: imageURL) { (data, response, error) in
+//                if let error = error {
+//                    print("Error in data task: \(error)")
+//                    return
+//                }
+//                guard let data = data else { return }
+//                DispatchQueue.main.async {
+//                    self.cache.cache(value: data, forKey: photoReference.id)
+//                    cell.imageView.image = UIImage(data: data)
+//                }
+//            }.resume()
+            
+            let fetchPhoto = FetchPhotoOperation(marsPhotoReference: photoReference)
+
+            let cachePhoto = BlockOperation {
+                if let data = fetchPhoto.imageData{
+                self.cache.cache(value: data, forKey: photoReference.id)
                 }
-                guard let data = data else { return }
+            }
+
+            let setPhoto = BlockOperation {
                 DispatchQueue.main.async {
-                    self.cache.cache(value: data, forKey: photoReference.id)
+                    if let data = fetchPhoto.imageData {
                     cell.imageView.image = UIImage(data: data)
+                    }
                 }
-            }.resume()
+            }
+            fetchOptDict[photoReference.id] = fetchPhoto
+            cachePhoto.addDependency(fetchPhoto)
+            setPhoto.addDependency(fetchPhoto)
+            photoFetchQueue.addOperations([fetchPhoto, cachePhoto, setPhoto], waitUntilFinished: false)
         }
+        
     }
     
     // Properties
